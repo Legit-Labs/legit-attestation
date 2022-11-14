@@ -2,52 +2,97 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/legit-labs/legit-attestation/pkg/legit_attest"
+	"github.com/spf13/cobra"
 )
 
 var (
 	keyPath      string
+	key          string
 	payloadPath  string
 	payloadStdin bool
 )
 
-func main() {
-	flag.StringVar(&keyPath, "key", "", "The path of the private key")
-	flag.StringVar(&payloadPath, "payload-path", "", "The path to a file containing payload to attest")
-	flag.BoolVar(&payloadStdin, "payload-stdin", false, "Read the json from stdin (overwrites -payload-path if provided)")
+var rootCmd = &cobra.Command{
+	Use:   "legit-attestation",
+	Short: "simple in-toto attestation utility",
+	RunE:  executeCmd,
+}
 
-	flag.Parse()
-
-	if keyPath == "" {
-		log.Panicf("please provide a private key path")
-	} else if !payloadStdin && payloadPath == "" {
-		log.Panicf("please provide a payload (or set -payload-stdin to read it from stdin)")
+func keyPathFromkey(key string) (path string, cleaner func(), err error) {
+	keyFile, err := ioutil.TempFile("", "")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create a temporary file for key: %v", err)
 	}
+	path = keyFile.Name()
+	cleaner = func() {
+		os.Remove(path)
+	}
+
+	if _, err = keyFile.Write([]byte(key)); err != nil {
+		_ = keyFile.Close()
+		cleaner()
+		return "", nil, err
+	}
+
+	_ = keyFile.Close()
+	return path, cleaner, nil
+}
+
+func executeCmd(cmd *cobra.Command, _args []string) error {
 
 	var payload []byte
 	var err error
-	if payloadStdin {
+	if (!payloadStdin && payloadPath == "") || (payloadStdin && payloadPath != "") {
+		return fmt.Errorf("please provide either a payload or set -payload-stdin to read it from stdin")
+	} else if payloadStdin {
 		if payload, err = ioutil.ReadAll(os.Stdin); err != nil {
-			log.Panicf("failed to read payload from stdin: %v", err)
+			return fmt.Errorf("failed to read payload from stdin: %v", err)
 		}
 	} else {
 		payload, err = os.ReadFile(payloadPath)
 		if err != nil {
-			log.Panicf("failed to open payload at %v: %v", payloadPath, err)
+			return fmt.Errorf("failed to open payload at %v: %v", payloadPath, err)
 		}
 	}
 
+	cleaner := func() {}
+	if (key != "" && keyPath != "") || (key == "" && keyPath == "") {
+		return fmt.Errorf("please provide either key or key-path")
+	} else if key != "" {
+		keyPath, cleaner, err = keyPathFromkey(key)
+		if err != nil {
+			return fmt.Errorf("failed to make a path from the input key: %v", err)
+		}
+		key = ""
+	}
+	defer cleaner()
+
 	attestation, err := legit_attest.Attest(context.Background(), keyPath, payload)
 	if err != nil {
-		log.Panicf("failed to attest: %v", err)
+		return fmt.Errorf("failed to attest: %v", err)
 	}
 
 	// Print the attestation as json output to stdout
 	fmt.Printf("%v", string(attestation))
+
+	return nil
+}
+
+func main() {
+	flag := rootCmd.Flags()
+
+	flag.StringVar(&keyPath, "key-path", "", "The path of the private key")
+	flag.StringVar(&key, "key", "", "The private key")
+	flag.StringVar(&payloadPath, "payload-path", "", "The path to a file containing payload to attest")
+	flag.BoolVar(&payloadStdin, "payload-stdin", false, "Read the json from stdin (overwrites -payload-path if provided)")
+
+	if err := rootCmd.Execute(); err != nil {
+		log.Panicf("execution falure: %v", err)
+	}
 }
