@@ -24,26 +24,6 @@ var rootCmd = &cobra.Command{
 	RunE:  executeCmd,
 }
 
-func keyPathFromkey(key string) (path string, cleaner func(), err error) {
-	keyFile, err := ioutil.TempFile("", "")
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create a temporary file for key: %v", err)
-	}
-	path = keyFile.Name()
-	cleaner = func() {
-		os.Remove(path)
-	}
-
-	if _, err = keyFile.Write([]byte(key)); err != nil {
-		_ = keyFile.Close()
-		cleaner()
-		return "", nil, err
-	}
-
-	_ = keyFile.Close()
-	return path, cleaner, nil
-}
-
 func executeCmd(cmd *cobra.Command, _args []string) error {
 
 	var payload []byte
@@ -65,7 +45,7 @@ func executeCmd(cmd *cobra.Command, _args []string) error {
 	if (key != "" && keyPath != "") || (key == "" && keyPath == "") {
 		return fmt.Errorf("please provide either key or key-path")
 	} else if key != "" {
-		keyPath, cleaner, err = keyPathFromkey(key)
+		keyPath, cleaner, err = legit_attest.KeyPathFromKey([]byte(key))
 		if err != nil {
 			return fmt.Errorf("failed to make a path from the input key: %v", err)
 		}

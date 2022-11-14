@@ -3,6 +3,9 @@ package legit_attest
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io/ioutil"
+	"os"
 
 	"github.com/sigstore/cosign/pkg/signature"
 	"github.com/sigstore/cosign/pkg/types"
@@ -23,4 +26,24 @@ func Attest(ctx context.Context, keyRef string, payload []byte) ([]byte, error) 
 	}
 
 	return signedPayload, nil
+}
+
+func KeyPathFromKey(key []byte) (path string, cleaner func(), err error) {
+	keyFile, err := ioutil.TempFile("", "")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create a temporary file for key: %v", err)
+	}
+	path = keyFile.Name()
+	cleaner = func() {
+		os.Remove(path)
+	}
+
+	if _, err = keyFile.Write([]byte(key)); err != nil {
+		_ = keyFile.Close()
+		cleaner()
+		return "", nil, err
+	}
+
+	_ = keyFile.Close()
+	return path, cleaner, nil
 }
